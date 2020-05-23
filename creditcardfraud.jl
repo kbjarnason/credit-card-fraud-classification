@@ -1,5 +1,4 @@
 #%% md
-**FIN580 HW3**
 By Kristian Bjarnason
 
 #%%
@@ -8,14 +7,14 @@ using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, Plot
 using Flux:outdims, activations
 
 #%%md
-*1. Data Preparation*
-Divide your sample into two equal sub-samples. You must keep the proportion of frauds the same in each sub-sample (246 frauds in each). You are going to use one sub-sample to estimate (train) your models and the second one to evaluate the out-of-sample performance of each model.
+*Data Preparation*
+Divide the sample into two equal sub-samples. Keep the proportion of frauds the same in each sub-sample (246 frauds in each). Use one sub-sample to estimate (train) your models and the second one to evaluate the out-of-sample performance of each model.
 #%%
 using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, Plots, Flux, EvalCurves
 using Flux:outdims, activations
 
 #Set drive and import data
-cd("/Users/kristianbjarnason/Documents/Princeton/Courses/Spring 2020/FIN580 - Quantitative Data Analysis in Finance/HW/HW3")
+cd("/Users/kristianbjarnason/Documents/Programming/Julia/creditcard")
 data = CSV.read("credicard.csv")
 
 data_fraud = filter(row -> row[:Class] == 1, data)
@@ -36,8 +35,8 @@ y_test = categorical(data_test.Class)
 y_test_int = data_test.Class
 
 #%%md
-*2. Estimation of models*
-You should estimate three different models: (1) logit; (2) support vector machines; (3) neural network. For each model, you have to justify the choices of the hyper-parameters (for example, for NN models, you should comments on the choice of the number of layers and units in each layer)
+*Estimation of models*
+Estimate three different models: (1) logit; (2) support vector machines; (3) neural network.
 #%%md
 Logit
 #%%
@@ -241,10 +240,9 @@ sum(m(Array(X_test[1:50000,:])'))
 # misclassification_rate(yhat_nn, y_test)
 
 #%%md
-*3. OOS results*
-For each estimated model, report the following out-of-sample results:
+*OOS results*
 #%%md
-(a) Confusion matrix
+Confusion matrix
 #%%
 cm_logit = confusion_matrix(yhat_logit,y_test)
 cm_svm = confusion_matrix(yhat_pred_svm,y_test)
@@ -258,23 +256,21 @@ plot(roc_curve(yhat_svm_p,y_test))
 plot(roc_curve(yhat_nn_p,y_test))
 
 #%%md
-(c) Precision-Recall curve
-A precision-Recall curve is a plot of Precision versus Recall,
-where Precision = True Positives/(TruePositives + FalsePositives) Recall = TruePositives/(TruePositives + FalseNegatives)
+Precision-Recall curve
 #%%
 plot(prcurve(pdf.(yhat_logit_p,1), y_test_int))
 plot(prcurve(pdf.(yhat_svm_p,1), y_test_int))
 plot(prcurve(pdf.(yhat_nn_p,1), y_test_int))
 
 #%%md
-*4. Discussion of Results*
+*Discussion of Results*
 Comment on your results:
 #%%md
-*(a) Which model performs the best?*
+*Which model performs the best?*
 
 
 #%%md
-*(b) What are the main differences of each model?*
+*What are the main differences of each model?*
 Logit:
 
 
