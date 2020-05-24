@@ -51,8 +51,8 @@ logit = machine(model_logit, X_train, y_train)
 
 fit!(logit)
 
-yhat_logit_p = predict(logit, X_test)
-yhat_logit = predict_mode(logit, X_test)
+yhat_logit_p = MLJBase.predict(logit, X_test)
+yhat_logit = MLJBase.predict_mode(logit, X_test)
 
 misclassification_rate(yhat_logit, y_test)
 
@@ -127,7 +127,7 @@ self_tuning_svm = machine(self_tuning_svm_model, X_train, y_train)
 fit!(self_tuning_svm)
 
 # yhat_svm_tuned_p = predict(self_tuning_svm, X_test)
-yhat_svm_tuned = predict(self_tuning_svm, X_test_std)
+yhat_svm_tuned = MLJBase.predict(self_tuning_svm, X_test_std)
 
 misclassification_rate(yhat_svm_tuned, y_test)
 
@@ -187,44 +187,6 @@ Neural Network:
 
 
 #%%
-#tuning was giving problems so manually trying different costs
-@load SVC
-model_svm1 = SVC(cost=1e-5)
-svc1 = machine(model_svm1, X_train_std, y_train)
-fit!(svc1)
-
-yhat_svm1 = predict(svc1, X_test_std)
-
-misclassification_rate(yhat_svm1, y_test)
-yhat_svm1
-
-# precision1 = true_positive(yhat_svm1, y_test) / (true_positive(yhat_svm1, y_test) + false_positive(yhat_svm1, y_test))
-# recall1 = true_positive(yhat_svm1, y_test) / (true_positive(yhat_svm1, y_test) + false_negative(yhat_svm1, y_test))
-
-#%%
-@load SVC
-model_svm2 = SVC(cost=0.1)
-svc2 = machine(model_svm2, X_train_std, y_train)
-fit!(svc2)
-
-yhat_svm2 = predict(svc2, X_test_std)
-misclassification_rate(yhat_svm2, y_test)
-yhat_svm2
-
-# precision2 = true_positive(yhat_svm2, y_test) / (true_positive(yhat_svm2, y_test) + false_positive(yhat_svm2, y_test))
-# recall2 = true_positive(yhat_svm2, y_test) / (true_positive(yhat_svm2, y_test) + false_negative(yhat_svm2, y_test))
-
-#%%
-@load SVC
-model_svm4 = SVC(cost=100.0)
-svc4 = machine(model_svm4, X_train_std, y_train)
-fit!(svc4)
-
-yhat_svm4 = predict(svc4, X_test)
-misclassification_rate(yhat_svm4, y_test)
-yhat_svm4
-
-#%%
 #Adapted from the tutorial: https://www.tensorflow.org/tutorials/structured_data/imbalanced_data
 #thanks to Michael Griffiths for his help putting this together too. https://pastebin.com/iwtCFN3F
 
@@ -272,7 +234,7 @@ opt = ADAM()
 # Custom training loop
 for batch in 1:400
     batch_data = sample(Array(training[1:29])', 32)
-    Flux.train!(loss, ps, batch_data, opt)
+    Flux.train!(loss, ps, batch_data, opt) #TODO crashes here...
     println(progress())
 end
 
