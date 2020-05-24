@@ -3,28 +3,29 @@ By Kristian Bjarnason
 
 #%%
 #Relevant packages
-using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, Plots, Flux, EvalCurves
+using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, Plots, Flux, EvalCurves
 using Flux:outdims, activations
 
 #%%md
 *Data Preparation*
 Divide the sample into two equal sub-samples. Keep the proportion of frauds the same in each sub-sample (246 frauds in each). Use one sub-sample to estimate (train) your models and the second one to evaluate the out-of-sample performance of each model.
 #%%
-using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJLinearModels, Plots, Flux, EvalCurves
-using Flux:outdims, activations
-
 #Set drive and import data
 cd("/Users/kristianbjarnason/Documents/Programming/Julia/creditcard")
 data = CSV.read("credicard.csv")
+
+#delete time column
+select!(data, Not(:Time))
+
+#log data column as it covers a large range. Also add 1e-6 so no values are 0 prior to being logged.
+data[!,:Amount] = log.(data[!,:Amount] .+ 1e-6)
 
 data_fraud = filter(row -> row[:Class] == 1, data)
 data_notfraud = filter(row -> row[:Class] == 0, data)
 
 #split into training and test data, training wi th 1 extra row due to odd numbber of non-fraudulent claims and each with even number of fraudulent claims
 data_train = vcat(data_fraud[1:round(Int, nrow(data_fraud)/2),:], data_notfraud[1:round(Int, nrow(data_notfraud)/2),:])
-sort!(data_train, :Time)
 data_test = vcat(data_fraud[round(Int, nrow(data_fraud)/2)+1:nrow(data_fraud),:], data_notfraud[round(Int, nrow(data_notfraud)/2)+1:nrow(data_notfraud),:])
-sort!(data_test, :Time)
 
 #Setup train and test arrays/vectors
 X_train = DataFrames.select(data_train, Not(:Class))
@@ -40,16 +41,9 @@ Estimate three different models: (1) logit; (2) support vector machines; (3) neu
 #%%md
 Logit
 #%%
-#initial logit classification with lambda = 0.2
-X_train = DataFrames.select(data_train, Not(:Class))
-X_test = DataFrames.select(data_test, Not(:Class))
-y_train = categorical(data_train.Class)
-y_train_int = data_train.Class
-y_test = categorical(data_test.Class)
-y_test_int = data_test.Class
-
+#initial logit classification with lambda = 1.0
 @load LogisticClassifier pkg=MLJLinearModels
-model_logit = LogisticClassifier(lambda=0.2)
+model_logit = LogisticClassifier(lambda=1.0)
 
 logit = machine(model_logit, X_train, y_train)
 
@@ -58,19 +52,12 @@ fit!(logit)
 yhat_logit_p = predict(logit, X_test)
 yhat_logit = predict_mode(logit, X_test)
 
-misclassification_rate(yhat_logit_p, y_test)
+misclassification_rate(yhat_logit, y_test)
 
 #%%
 
 #%%
-#tuned svm
-X_train = DataFrames.select(data_train, Not(:Class))
-X_test = DataFrames.select(data_test, Not(:Class))
-y_train = categorical(data_train.Class)
-y_train_int = data_train.Class
-y_test = categorical(data_test.Class)
-y_test_int = data_test.Class
-
+#tuned logit #TODO not working???
 model_logit = @load LogisticClassifier pkg=MLJLinearModels
 r = range(model_logit, :lambda, lower=0.001, upper=1.0, scale=:linear)
 
@@ -92,42 +79,42 @@ misclassification_rate(yhat_logit_tuned, y_test)
 #%%md
 Support Vector Machine
 #%%
-X_train = DataFrames.select(data_train[1:5000,:], Not(:Class))
-X_test = DataFrames.select(data_test[1:5000,:], Not(:Class))
-y_train = categorical(data_train[1:5000,:].Class)
-y_train_int = data_train[1:5000,:].Class
-y_test = categorical(data_test[1:5000,:].Class)
-y_test_int = data_test[1:5000,:].Class
+#standardise data for SVM
+stand_model = Standardizer()
 
-#tuning was giving problems so manually trying different costs
-@load SVC
-model_svm1 = SVC(cost=1.0)
-svc1 = machine(model_svm1, X_train, y_train)
-fit!(svc1)
-
-yhat_svm1 = predict(svc1, X_test)
-misclassification_rate(yhat_svm1, y_test)
-yhat_svm1
+X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train)
+X_test_std = MLJModels.transform(fit!(machine(stand_model, X_test)), X_test)
 
 #%%
+#initial logit classification with cost = 1.0
 @load SVC
-model_svm2 = SVC(cost=0.5)
-svc2 = machine(model_svm2, X_train, y_train)
-fit!(svc2)
+model_svm = SVC(cost=1.0)
+svc = machine(model_svm, X_train_std, y_train)
+fit!(svc)
 
-yhat_svm2 = predict(svc2, X_test)
-misclassification_rate(yhat_svm2, y_test)
-yhat_svm2
+yhat_svm = predict(svc, X_test_std)
+misclassification_rate(yhat_svm, y_test)
+yhat_svm
+CSV.write("yhat_svm.csv", yhat_svm)
 
 #%%
-@load SVC
-model_svm3 = SVC(cost=0.1)
-svc3 = machine(model_svm3, X_train, y_train)
-fit!(svc3)
+model_svm = @load SVC
+r = range(model_svm, :cost, lower=1e-5, upper=5.0, scale=:linear)
 
-yhat_svm3 = predict(svc3, X_test)
-misclassification_rate(yhat_svm3, y_test)
-yhat_svm3
+self_tuning_svm_model = TunedModel(model=model_svm,
+                                                  resampling = CV(nfolds=3),
+                                                  tuning = Grid(resolution=10),
+                                                  range = r,
+                                                  measure = misclassification_rate)
+
+self_tuning_svm = machine(self_tuning_svm_model, X_train, y_train)
+
+fit!(self_tuning_svm)
+
+# yhat_svm_tuned_p = predict(self_tuning_svm, X_test)
+yhat_svm_tuned = predict_mode(self_tuning_svm, X_test)
+
+misclassification_rate(yhat_svm_tuned, y_test
 
 #%%md
 Neural Network
@@ -249,3 +236,42 @@ SVM:
 
 
 Neural Network:
+
+
+#%%
+#tuning was giving problems so manually trying different costs
+@load SVC
+model_svm1 = SVC(cost=1e-5)
+svc1 = machine(model_svm1, X_train_std, y_train)
+fit!(svc1)
+
+yhat_svm1 = predict(svc1, X_test_std)
+
+misclassification_rate(yhat_svm1, y_test)
+yhat_svm1
+
+# precision1 = true_positive(yhat_svm1, y_test) / (true_positive(yhat_svm1, y_test) + false_positive(yhat_svm1, y_test))
+# recall1 = true_positive(yhat_svm1, y_test) / (true_positive(yhat_svm1, y_test) + false_negative(yhat_svm1, y_test))
+
+#%%
+@load SVC
+model_svm2 = SVC(cost=0.1)
+svc2 = machine(model_svm2, X_train_std, y_train)
+fit!(svc2)
+
+yhat_svm2 = predict(svc2, X_test_std)
+misclassification_rate(yhat_svm2, y_test)
+yhat_svm2
+
+# precision2 = true_positive(yhat_svm2, y_test) / (true_positive(yhat_svm2, y_test) + false_positive(yhat_svm2, y_test))
+# recall2 = true_positive(yhat_svm2, y_test) / (true_positive(yhat_svm2, y_test) + false_negative(yhat_svm2, y_test))
+
+#%%
+@load SVC
+model_svm4 = SVC(cost=100.0)
+svc4 = machine(model_svm4, X_train_std, y_train)
+fit!(svc4)
+
+yhat_svm4 = predict(svc4, X_test)
+misclassification_rate(yhat_svm4, y_test)
+yhat_svm4
