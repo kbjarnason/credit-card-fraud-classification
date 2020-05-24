@@ -56,6 +56,9 @@ yhat_logit = predict_mode(logit, X_test)
 
 misclassification_rate(yhat_logit, y_test)
 
+CSV.write("yhat_logit.csv", yhat_logit)
+CSV.write("yhat_logit_p.csv", yhat_logit_p)
+
 #%%
 #tuned logit
 model_logit = @load LogisticClassifier pkg=MLJLinearModels
@@ -76,15 +79,17 @@ yhat_logit_tuned = MLJBase.predict_mode(self_tuning_logit, X_test)
 
 misclassification_rate(yhat_logit_tuned, y_test)
 
+CSV.write("yhat_logit_tuned.csv", yhat_logit_tuned)
+CSV.write("yhat_logit_tuned_p.csv", yhat_logit_tuned_p)
+
 #%%md
 Support Vector Machine
 #%%
 #standardise data for SVM
 stand_model = Standardizer()
 
-X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train)
+X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train) # not used
 X_test_std = MLJModels.transform(fit!(machine(stand_model, X_test)), X_test)
-
 
 #%%
 #initial logit classification with cost = 1.0
@@ -139,7 +144,6 @@ m =
 
 loss(x, y) = Flux.binarycrossentropy(m(x), y)
 opt = ADAM()
-
 
 #%%md
 *OOS results*
