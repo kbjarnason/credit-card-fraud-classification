@@ -3,8 +3,9 @@ By Kristian Bjarnason
 
 #%%
 #Relevant packages
-using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, Plots, Flux, EvalCurves
+using Pkg, Revise, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, Plots, Flux, EvalCurves, UrlDownload, MLBase, StatsBase
 using Flux:outdims, activations
+# using AUC # add git@github.com:paulstey/AUC.jl.git
 
 #%%md
 *Data Preparation*
@@ -12,7 +13,8 @@ Divide the sample into two equal sub-samples. Keep the proportion of frauds the 
 #%%
 #Set drive and import data
 cd("/Users/kristianbjarnason/Documents/Programming/Julia/creditcard")
-data = CSV.read("credicard.csv")
+# data = CSV.read("credicard.csv")
+data = DataFrame(urldownload("https://storage.googleapis.com/download.tensorflow.org/data/creditcard.csv"))
 
 #delete time column
 select!(data, Not(:Time))
@@ -55,15 +57,13 @@ yhat_logit = predict_mode(logit, X_test)
 misclassification_rate(yhat_logit, y_test)
 
 #%%
-
-#%%
-#tuned logit #TODO not working???
+#tuned logit
 model_logit = @load LogisticClassifier pkg=MLJLinearModels
-r = range(model_logit, :lambda, lower=0.001, upper=1.0, scale=:linear)
+r = range(model_logit, :lambda, lower=1e-6, upper=100, scale=:log)
 
 self_tuning_logit_model = TunedModel(model=model_logit,
-                                                  resampling = CV(nfolds=5),
-                                                  tuning = Grid(resolution=5),
+                                                  resampling = CV(nfolds=3),
+                                                  tuning = Grid(resolution=10),
                                                   range = r,
                                                   measure = cross_entropy)
 
@@ -71,8 +71,8 @@ self_tuning_logit = machine(self_tuning_logit_model, X_train, y_train)
 
 fit!(self_tuning_logit)
 
-yhat_logit_tuned_p = predict(self_tuning_logit, X_test)
-yhat_logit_tuned = predict_mode(self_tuning_logit, X_test)
+yhat_logit_tuned_p = MLJBase.predict(self_tuning_logit, X_test)
+yhat_logit_tuned = MLJBase.predict_mode(self_tuning_logit, X_test)
 
 misclassification_rate(yhat_logit_tuned, y_test)
 
@@ -85,116 +85,60 @@ stand_model = Standardizer()
 X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train)
 X_test_std = MLJModels.transform(fit!(machine(stand_model, X_test)), X_test)
 
+
 #%%
 #initial logit classification with cost = 1.0
 @load SVC
-model_svm = SVC(cost=1.0)
-svc = machine(model_svm, X_train_std, y_train)
+model_svm = @pipeline Std_SVC(std_model = Standardizer(),
+                                      svc = SVC())
+
+svc = machine(model_svm, X_train, y_train)
+
 fit!(svc)
 
-yhat_svm = predict(svc, X_test_std)
+yhat_svm = MLJBase.predict(svc, X_test_std)
 misclassification_rate(yhat_svm, y_test)
-yhat_svm
+
 CSV.write("yhat_svm.csv", yhat_svm)
 
 #%%
-model_svm = @load SVC
-r = range(model_svm, :cost, lower=1e-5, upper=5.0, scale=:linear)
+@load SVC
+
+model_svm = @pipeline Std_SVC(std_model = Standardizer(),
+                              svc = SVC())
+
+r = range(model_svm, :(svc.cost), lower=1e-5, upper=5.0, scale=:linear)
+
+svc = machine(model_svm, X_train, y_train)
 
 self_tuning_svm_model = TunedModel(model=model_svm,
-                                                  resampling = CV(nfolds=3),
-                                                  tuning = Grid(resolution=10),
-                                                  range = r,
-                                                  measure = misclassification_rate)
+                                   resampling = CV(nfolds=3),
+                                   tuning = Grid(resolution=10),
+                                   range = r,
+                                   measure = misclassification_rate)
 
 self_tuning_svm = machine(self_tuning_svm_model, X_train, y_train)
 
 fit!(self_tuning_svm)
 
 # yhat_svm_tuned_p = predict(self_tuning_svm, X_test)
-yhat_svm_tuned = predict_mode(self_tuning_svm, X_test)
+yhat_svm_tuned = predict(self_tuning_svm, X_test_std)
 
-misclassification_rate(yhat_svm_tuned, y_test
+misclassification_rate(yhat_svm_tuned, y_test)
+
+CSV.write("yhat_svm_tuned.csv", yhat_svm_tuned)
 
 #%%md
 Neural Network
 #%%
-#Adapted from the tutorial: https://www.tensorflow.org/tutorials/structured_data/imbalanced_data
-#thanks to Michael Griffiths for his help putting this together too. https://pastebin.com/iwtCFN3F
-using CSV
-using StatsBase
-using Statistics
-using Flux
-using DataFrames
-using UrlDownload
-# using AUC # add git@github.com:paulstey/AUC.jl.git
-using MLBase
-using StatsBase
-
-cd("/Users/kristianbjarnason/Documents/Programming/Julia/creditcard")
-data = CSV.read("credicard.csv")
-# data = urldownload("https://storage.googleapis.com/download.tensorflow.org/data/creditcard.csv")
-
-data[:Amount] = log.(data[:Amount] .+ 1e-6)
-
-# The scale of the columns is quite variable -- we need to normalize each column
-# The steps are to log the Amount and then standard scale everything (only use training data for this)
-n_rows = size(data, 1)
-train_idx = sample(1:n_rows, Int(floor(n_rows * .7)))
-remainder = setdiff(1:n_rows, train_idx)
-validation_idx = sample(remainder, Int(floor(size(remainder, 1) * .2)))
-test_idx = setdiff(remainder, validation_idx)
-
-# Remove time column (index 1) and log amount column (index 30)
-train = data[train_idx,2:31]
-test = data[test_idx,2:31]
-valid = data[validation_idx,2:31]
-
-# Now let's scale
-means_train, sd_train =  Array{Float32}(undef, 29),  Array{Float32}(undef, 29)
-means = colwise(mean, train)
-sd = colwise(std, train)
-
-training = train
-testing = test
-validation = valid
-for i in 1:29
-  training[i] = (training[:,i] .- means[i]) ./ sd[i]
-  testing[i] = (testing[:,i] .- means[i]) ./ sd[i]
-  validation[i] = (validation[:,i] .- means[i]) ./ sd[i]
-end
-
-m = Chain(
+m =
+ Chain(
   Dense(29, 16, relu),
   Dense(16, 1, σ)
 )
-# try crossentropy??
+
 loss(x, y) = Flux.binarycrossentropy(m(x), y)
-valid_X = Array(validation[:,1:29])'
-valid_y = validation[:Class]
-
-progress() = sum(loss.(valid_X, valid_y))
-ps = Flux.params(m)
 opt = ADAM()
-
-# Custom training loop
-for batch in 1:400
-    batch_data = sample(Array(training[1:29])', 32)
-    Flux.train!(loss, ps, batch_data, opt)
-    println(progress())
-end
-
-# Evaluate on test data
-y_pred = [x[1] for x in m.([d[1] for d in testing])]
-y_test = [d[2] for d in testing]
-
-y_thresh = (y_pred[:] .> .5) .+ 1
-confusmat(2, y_test[:] .+ 1, y_thresh[:])
-
-#%%md
-#50/50 train/test split version
-#%%
-
 
 
 #%%md
@@ -275,3 +219,62 @@ fit!(svc4)
 yhat_svm4 = predict(svc4, X_test)
 misclassification_rate(yhat_svm4, y_test)
 yhat_svm4
+
+#%%
+#Adapted from the tutorial: https://www.tensorflow.org/tutorials/structured_data/imbalanced_data
+#thanks to Michael Griffiths for his help putting this together too. https://pastebin.com/iwtCFN3F
+
+# The scale of the columns is quite variable -- we need to normalize each column
+# The steps are to log the Amount and then standard scale everything (only use training data for this)
+n_rows = size(data, 1)
+train_idx = sample(1:n_rows, Int(floor(n_rows * .7)))
+remainder = setdiff(1:n_rows, train_idx)
+validation_idx = sample(remainder, Int(floor(size(remainder, 1) * .2)))
+test_idx = setdiff(remainder, validation_idx)
+
+# Remove time column (index 1) and log amount column (index 30)
+train = data[train_idx,:]
+test = data[test_idx,:]
+valid = data[validation_idx,:]
+
+# Now let's scale
+means_train, sd_train =  Array{Float32}(undef, 29),  Array{Float32}(undef, 29)
+means = colwise(mean, train)
+sd = colwise(std, train)
+
+training = train
+testing = test
+validation = valid
+for i in 1:29
+  training[i] = (training[:,i] .- means[i]) ./ sd[i]
+  testing[i] = (testing[:,i] .- means[i]) ./ sd[i]
+  validation[i] = (validation[:,i] .- means[i]) ./ sd[i]
+end
+
+m = Chain(
+  Dense(29, 16, relu),
+  Dense(16, 1, σ)
+)
+
+# try crossentropy??
+loss(x, y) = Flux.binarycrossentropy(m(x), y)
+valid_X = Array(validation[:,1:29])'
+valid_y = validation[:,:Class]
+
+progress() = sum(loss.(valid_X, valid_y))
+ps = Flux.params(m)
+opt = ADAM()
+
+# Custom training loop
+for batch in 1:400
+    batch_data = sample(Array(training[1:29])', 32)
+    Flux.train!(loss, ps, batch_data, opt)
+    println(progress())
+end
+
+# Evaluate on test data
+y_pred = [x[1] for x in m.([d[1] for d in testing])]
+y_test = [d[2] for d in testing]
+
+y_thresh = (y_pred[:] .> .5) .+ 1
+confusmat(2, y_test[:] .+ 1, y_thresh[:])
