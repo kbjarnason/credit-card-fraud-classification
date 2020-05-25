@@ -1,6 +1,7 @@
 #%% md
 Classification of fraudulent/not credit card transactions (imbalanced data)
 By Kristian Bjarnason
+- To improve, implement train, test, val split rather than just train, test
 #%%
 #Relevant packages
 using Pkg, Revise, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, MLJLinearModels, Plots, Flux, EvalCurves, UrlDownload, MLBase, StatsBase, ROC
@@ -38,6 +39,11 @@ y_train_int = data_train.Class
 y_test = categorical(data_test.Class)
 y_test_int = data_test.Class
 
+#Standardised data for SVM and NN
+stand_model = Standardizer()
+X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train) # not used
+X_test_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_test)
+
 #%%md
 *Estimation of models*
 Estimate three different models: (1) logit; (2) support vector machines; (3) neural network.
@@ -53,8 +59,9 @@ logit = machine(model_logit, X_train, y_train)
 fit!(logit)
 
 yhat_logit_p = MLJBase.predict(logit, X_test)
-yhat_logit = MLJBase.predict_mode(logit, X_test)
+yhat_logit = categorical(mode.(yhat_logit_p))
 
+cm_logit = confusion_matrix(yhat_logit, y_test)
 misclassification_rate(yhat_logit, y_test)
 
 CSV.write("yhat_logit.csv", yhat_logit)
@@ -90,7 +97,7 @@ Support Vector Machine
 stand_model = Standardizer()
 
 X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train) # not used
-X_test_std = MLJModels.transform(fit!(machine(stand_model, X_test)), X_test)
+X_test_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_test)
 
 #%%
 #initial svm classification with cost = 1.0
@@ -103,7 +110,7 @@ svc = machine(model_svm, X_train, y_train)
 fit!(svc)
 
 yhat_svm = MLJBase.predict(svc, X_test_std)
-
+#0.00163
 misclassification_rate(yhat_svm, y_test)
 cm_svm = confusion_matrix(yhat_svm, y_test)
 
@@ -111,11 +118,10 @@ CSV.write("yhat_svm.csv", yhat_svm)
 
 #%%
 @load SVC
-
 model_svm = @pipeline Std_SVC(std_model = Standardizer(),
                               svc = SVC())
 
-r = range(model_svm, :(svc.cost), lower=0.0, upper=5.0, scale=:linear)
+r = range(model_svm, :(svc.cost), lower=0.0, upper=2.5, scale=:linear)
 iterator(r,6)
 svc = machine(model_svm, X_train, y_train)
 
@@ -123,7 +129,7 @@ self_tuning_svm_model = TunedModel(model=model_svm,
                                    resampling = CV(nfolds=3),
                                    tuning = Grid(resolution=6),
                                    range = r,
-                                   measure = misclassification_rate)
+                                   measure = MLJ.precision)
 
 self_tuning_svm = machine(self_tuning_svm_model, X_train, y_train)
 
@@ -144,28 +150,46 @@ CSV.write("yhat_svm_tuned.csv", yhat_svm_tuned)
 Neural Network
 #%%
 #NN implementation
-data1 = DataLoader(Array(X_train)', y_train_int, batchsize=128)
+
+#Below to work with binarycrossentropy but a lot slower... (not using DataLoader?)
+# data1 = zip(Flux.unstack(Array(X_train)', 2), y_train_int)
+# loss(x, y) = Flux.binarycrossentropy(m(x)[1], y)
+
+data1 = DataLoader(Array(X_train_std)', y_train_int, batchsize=2048)
 
 n_inputs = ncol(X_train)
 n_outputs = 1
-n_hidden1 = 16
+n_hidden1 = 8
+n_hidden2 = 2
 
 m = Chain(
           Dense(n_inputs, n_hidden1, relu),
           Dropout(0.5),
-          Dense(n_hidden1, n_outputs, σ)
+          Dense(n_hidden1, n_hidden2, relu),
+          Dropout(0.5),
+          Dense(n_hidden2, n_outputs, σ)
           )
 
+# loss(x, y) = Flux.tversky_loss(m(x), y, β=0.8) #tversky loss uses precision and recall, slower calc than crossentropy
 loss(x, y) = Flux.crossentropy(m(x), y)
 ps = Flux.params(m)
 opt = ADAM()
 
-@epochs 20 Flux.train!(loss, ps, data1, opt) #giving highly variable/not always good results?
+@epochs 20 Flux.train!(loss, ps, data1, opt)
 
-yhat_nn_p = vec(m(Array(X_test)'))
+yhat_nn_p = vec(m(Array(X_test_std)'))
 yhat_nn = categorical(Int.(yhat_nn_p .<= 0.5))
 
+cm_nn = confusion_matrix(yhat_nn, y_test)
 misclassification_rate(yhat_nn, y_test)
+
+yhat_nn_train_p = vec(m(Array(X_train_std)'))
+yhat_nn_train = categorical(Int.(yhat_nn_train_p .<= 0.5))
+
+cm_nn = confusion_matrix(yhat_nn_train, y_train)
+misclassification_rate(yhat_nn_train, y_train)
+
+CSV.write("yhat_nn.csv", yhat_nn)
 
 #%%md
 *OOS results*
