@@ -159,23 +159,23 @@ data1 = DataLoader(Array(X_train_std)', y_train_int, batchsize=2048)
 
 n_inputs = ncol(X_train)
 n_outputs = 1
-n_hidden1 = 8
-n_hidden2 = 2
+n_hidden1 = 16
+n_hidden2 = 4
 
 m = Chain(
           Dense(n_inputs, n_hidden1, relu),
-          Dropout(0.5),
+          Dropout(0.75),
           Dense(n_hidden1, n_hidden2, relu),
           Dropout(0.5),
           Dense(n_hidden2, n_outputs, σ)
           )
 
-# loss(x, y) = Flux.tversky_loss(m(x), y, β=0.8) #tversky loss uses precision and recall, slower calc than crossentropy
+# loss(x, y) = Flux.tversky_loss(m(x), y, β=0.7) #tversky loss uses precision and recall, slower calc than crossentropy
 loss(x, y) = Flux.crossentropy(m(x), y)
 ps = Flux.params(m)
 opt = ADAM()
 
-@epochs 20 Flux.train!(loss, ps, data1, opt)
+@epochs 100 Flux.train!(loss, ps, data1, opt)
 
 yhat_nn_p = vec(m(Array(X_test_std)'))
 yhat_nn = categorical(Int.(yhat_nn_p .<= 0.5))
@@ -217,12 +217,11 @@ cm_nn = confusion_matrix(yhat_nn,y_test)
 ROC curves
 #%%
 plot(roc_curve(yhat_logit_tuned_p,y_test))
+plot(ROC.roc(yhat_nn_p, y_test, 1))
 
 # don't have score vectors for SVM
 # plot(roc_curve(yhat_svm_p,y_test))
 # plot(roc_curve(yhat_nn_p,y_test))
-
-plot(ROC.roc(yhat_nn_p, y_test, 1))
 
 #how to plot this??
 MLBase.roc(y_test_int, yhat_nn_p)
@@ -231,9 +230,12 @@ MLBase.roc(y_test_int, yhat_nn_p)
 Precision-Recall curve
 #%%
 plot(prcurve(pdf.(yhat_logit_tuned_p,1), y_test_int))
+plot(prcurve(yhat_nn_p, y_test_int))
+
 # don't have score vectors for SVM
 # plot(prcurve(pdf.(yhat_svm_p,1), y_test_int))
-plot(prcurve(yhat_nn_p, y_test_int))
+
+
 
 #%%md
 *Discussion of Results*
@@ -260,62 +262,4 @@ Precision-Recall curve
 1. NN
 2. Logit
 
-#%%
-#Couldn't get working
-#Adapted from the tutorial: https://www.tensorflow.org/tutorials/structured_data/imbalanced_data
-#thanks to Michael Griffiths for his help putting this together too. https://pastebin.com/iwtCFN3F
-
-# The scale of the columns is quite variable -- we need to normalize each column
-# The steps are to log the Amount and then standard scale everything (only use training data for this)
-n_rows = size(data, 1)
-train_idx = sample(1:n_rows, Int(floor(n_rows * .7)))
-remainder = setdiff(1:n_rows, train_idx)
-validation_idx = sample(remainder, Int(floor(size(remainder, 1) * .2)))
-test_idx = setdiff(remainder, validation_idx)
-
-# Remove time column (index 1) and log amount column (index 30)
-train = data[train_idx,:]
-test = data[test_idx,:]
-valid = data[validation_idx,:]
-
-# Now let's scale
-means_train, sd_train =  Array{Float32}(undef, 29),  Array{Float32}(undef, 29)
-means = colwise(mean, train)
-sd = colwise(std, train)
-
-training = train
-testing = test
-validation = valid
-for i in 1:29
-  training[i] = (training[:,i] .- means[i]) ./ sd[i]
-  testing[i] = (testing[:,i] .- means[i]) ./ sd[i]
-  validation[i] = (validation[:,i] .- means[i]) ./ sd[i]
-end
-
-m = Chain(
-  Dense(29, 16, relu),
-  Dense(16, 1, σ)
-)
-
-# try crossentropy??
-loss(x, y) = Flux.binarycrossentropy(m(x), y)
-valid_X = Array(validation[:,1:29])'
-valid_y = validation[:,:Class]
-
-progress() = sum(loss.(valid_X, valid_y))
-ps = Flux.params(m)
-opt = ADAM()
-
-# Custom training loop
-for batch in 1:400
-    batch_data = sample(Array(training[1:29])', 32)
-    Flux.train!(loss, ps, batch_data, opt) #TODO crashes here...
-    println(progress())
-end
-
-# Evaluate on test data
-y_pred = [x[1] for x in m.([d[1] for d in testing])]
-y_test = [d[2] for d in testing]
-
-y_thresh = (y_pred[:] .> .5) .+ 1
-confusmat(2, y_test[:] .+ 1, y_thresh[:])
+#END
