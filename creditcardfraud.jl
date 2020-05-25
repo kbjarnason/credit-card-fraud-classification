@@ -1,9 +1,9 @@
 #%% md
+Classification of fraudulent/not credit card transactions (imbalanced data)
 By Kristian Bjarnason
-
 #%%
 #Relevant packages
-using Pkg, Revise, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, MLJLinearModels, Plots, Flux, EvalCurves, UrlDownload, MLBase, StatsBase
+using Pkg, Revise, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, MLJLinearModels, Plots, Flux, EvalCurves, UrlDownload, MLBase, StatsBase, ROC
 using Flux:outdims, activations, @epochs
 using Flux.Data
 # using AUC # add git@github.com:paulstey/AUC.jl.git
@@ -193,9 +193,15 @@ cm_nn = confusion_matrix(yhat_nn,y_test)
 ROC curves
 #%%
 plot(roc_curve(yhat_logit_tuned_p,y_test))
+
 # don't have score vectors for SVM
 # plot(roc_curve(yhat_svm_p,y_test))
-plot(roc_curve(yhat_nn_p,y_test))
+# plot(roc_curve(yhat_nn_p,y_test))
+
+plot(ROC.roc(yhat_nn_p, y_test, 1))
+
+#how to plot this??
+MLBase.roc(y_test_int, yhat_nn_p)
 
 #%%md
 Precision-Recall curve
