@@ -160,31 +160,31 @@ data1 = DataLoader(Array(X_train_std)', y_train_int, batchsize=2048)
 n_inputs = ncol(X_train)
 n_outputs = 1
 n_hidden1 = 16
-n_hidden2 = 4
+n_hidden2 = 8
 
 m = Chain(
           Dense(n_inputs, n_hidden1, relu),
-          Dropout(0.75),
-          Dense(n_hidden1, n_hidden2, relu),
+          Dropout(0.5),
+          Dense(n_hidden1, n_hidden2, σ),
           Dropout(0.5),
           Dense(n_hidden2, n_outputs, σ)
           )
 
-# loss(x, y) = Flux.tversky_loss(m(x), y, β=0.7) #tversky loss uses precision and recall, slower calc than crossentropy
-loss(x, y) = Flux.crossentropy(m(x), y)
+loss(x, y) = Flux.tversky_loss(m(x), y, β=1/3) #tversky loss uses precision and recall, slower calc than crossentropy
+# loss(x, y) = Flux.crossentropy(m(x), y)
 ps = Flux.params(m)
 opt = ADAM()
 
-@epochs 100 Flux.train!(loss, ps, data1, opt)
+@epochs 5 Flux.train!(loss, ps, data1, opt)
 
 yhat_nn_p = vec(m(Array(X_test_std)'))
-yhat_nn = categorical(Int.(yhat_nn_p .<= 0.5))
+yhat_nn = categorical(Int.(yhat_nn_p .>= 0.5))
+
+yhat_nn_train_p = vec(m(Array(X_train_std)'))
+yhat_nn_train = categorical(Int.(yhat_nn_train_p .>= 0.5))
 
 cm_nn = confusion_matrix(yhat_nn, y_test)
 misclassification_rate(yhat_nn, y_test)
-
-yhat_nn_train_p = vec(m(Array(X_train_std)'))
-yhat_nn_train = categorical(Int.(yhat_nn_train_p .<= 0.5))
 
 cm_nn = confusion_matrix(yhat_nn_train, y_train)
 misclassification_rate(yhat_nn_train, y_train)
