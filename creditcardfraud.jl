@@ -157,6 +157,8 @@ Neural Network
 
 data1 = DataLoader(Array(X_train_std)', y_train_int, batchsize=2048)
 
+evalcb() = @show(loss(test_x, test_y))
+
 n_inputs = ncol(X_train)
 n_outputs = 1
 n_hidden1 = 16
@@ -170,18 +172,18 @@ m = Chain(
           Dense(n_hidden2, n_outputs, σ)
           )
 
-loss(x, y) = Flux.tversky_loss(m(x), y, β=1/3) #tversky loss uses precision and recall, slower calc than crossentropy
-# loss(x, y) = Flux.crossentropy(m(x), y)
+loss(x, y) = Flux.tversky_loss(m(x), y, β=0.7) #tversky loss uses precision and recall, slower calc than crossentropy
+# oss(x, y) = Flux.crossentropy(m(x), y)
 ps = Flux.params(m)
-opt = ADAM()
+opt = ADAM(1e-5)
 
-@epochs 5 Flux.train!(loss, ps, data1, opt)
+@epochs 100 Flux.train!(loss, ps, data1, opt, cb = throttle(evalcb, 20))
 
 yhat_nn_p = vec(m(Array(X_test_std)'))
-yhat_nn = categorical(Int.(yhat_nn_p .>= 0.5))
+yhat_nn = categorical(Int.(yhat_nn_p .<= 0.5))
 
 yhat_nn_train_p = vec(m(Array(X_train_std)'))
-yhat_nn_train = categorical(Int.(yhat_nn_train_p .>= 0.5))
+yhat_nn_train = categorical(Int.(yhat_nn_train_p .<= 0.5))
 
 cm_nn = confusion_matrix(yhat_nn, y_test)
 misclassification_rate(yhat_nn, y_test)
@@ -209,14 +211,16 @@ misclassification_rate(yhat_nn, y_test)
 #%%md
 Confusion matrix
 #%%
-cm_logit = confusion_matrix(yhat_logit_tuned,y_test)
-cm_svm = confusion_matrix(yhat_svm_tuned ,y_test)
-cm_nn = confusion_matrix(yhat_nn,y_test)
+cm_logit = confusion_matrix(yhat_logit_tuned, y_test)
+cm_svm = confusion_matrix(yhat_svm_tuned , y_test)
+cm_nn = confusion_matrix(yhat_nn, y_test)
 
 #%%md
 ROC curves
 #%%
-plot(roc_curve(yhat_logit_tuned_p,y_test))
+#Due to different data output structure had to use different packages for ROC curves
+plot(roc_curve(yhat_logit_tuned_p, y_test))
+plot(ROC.roc(pdf.(yhat_logit_tuned_p), y_test, 1)))
 plot(ROC.roc(yhat_nn_p, y_test, 1))
 
 # don't have score vectors for SVM
