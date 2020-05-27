@@ -1,11 +1,11 @@
-#%% md
 Classification of fraudulent/not credit card transactions (imbalanced data)
 By Kristian Bjarnason
 - To improve, implement train, test, val split rather than just train, test
 #%%
 #Relevant packages
 using Pkg, Revise, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, MLJLinearModels, Plots, Flux, EvalCurves, UrlDownload, MLBase, StatsBase, ROC
-using Flux:outdims, activations, @epochs
+using Flux:outdims, activations, @epochs, throttle
+#%% md
 using Flux.Data
 # using AUC # add git@github.com:paulstey/AUC.jl.git
 
@@ -41,7 +41,7 @@ y_test_int = data_test.Class
 
 #Standardised data for SVM and NN
 stand_model = Standardizer()
-X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train) # not used
+X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train)
 X_test_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_test)
 
 #%%md
@@ -149,47 +149,41 @@ CSV.write("yhat_svm_tuned.csv", yhat_svm_tuned)
 #%%md
 Neural Network
 #%%
-#NN implementation
+#oversample fraudulent cases (since data so imbalanced)
+X_train_oversampled = vcat(X_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),1:29], 1000))
+y_train_oversampled = vcat(y_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),30], 1000))
 
-#Below to work with binarycrossentropy but a lot slower... (not using DataLoader?)
-# data1 = zip(Flux.unstack(Array(X_train)', 2), y_train_int)
-# loss(x, y) = Flux.binarycrossentropy(m(x)[1], y)
+stand_model = Standardizer()
+X_train_oversampled_std = MLJModels.transform(fit!(machine(stand_model, X_train_oversampled)), X_train_oversampled)
 
-data1 = DataLoader(Array(X_train_std)', y_train_int, batchsize=2048)
+data1 = DataLoader(Array(X_train_oversampled_std)', y_train_oversampled, batchsize=2048, shuffle=true)
 
-evalcb() = @show(loss(test_x, test_y))
-
-n_inputs = ncol(X_train)
+n_inputs = ncol(X_train_oversampled)
 n_outputs = 1
 n_hidden1 = 16
-n_hidden2 = 8
+# n_hidden2 = 8
 
 m = Chain(
           Dense(n_inputs, n_hidden1, relu),
-          Dropout(0.5),
-          Dense(n_hidden1, n_hidden2, σ),
-          Dropout(0.5),
-          Dense(n_hidden2, n_outputs, σ)
+          Dropout(0.1),
+          Dense(n_hidden1, n_outputs, σ)
           )
 
-loss(x, y) = Flux.tversky_loss(m(x), y, β=0.7) #tversky loss uses precision and recall, slower calc than crossentropy
-# oss(x, y) = Flux.crossentropy(m(x), y)
-ps = Flux.params(m)
-opt = ADAM(1e-5)
+# loss(x, y) = Flux.tversky_loss(m(x), y, β=0.7) #tversky loss uses precision and recall, slower calc than crossentropy
+# loss(x, y) = Flux.crossentropy(m(x), y)
+loss(x, y) = Flux.binarycrossentropy(m(x)[1], y)
 
-@epochs 100 Flux.train!(loss, ps, data1, opt, cb = throttle(evalcb, 20))
+ps = Flux.params(m)
+# opt = ADAM()
+opt = Gradient()
+
+@epochs 100 Flux.train!(loss, ps, data1, opt)
 
 yhat_nn_p = vec(m(Array(X_test_std)'))
 yhat_nn = categorical(Int.(yhat_nn_p .<= 0.5))
 
-yhat_nn_train_p = vec(m(Array(X_train_std)'))
-yhat_nn_train = categorical(Int.(yhat_nn_train_p .<= 0.5))
-
 cm_nn = confusion_matrix(yhat_nn, y_test)
 misclassification_rate(yhat_nn, y_test)
-
-cm_nn = confusion_matrix(yhat_nn_train, y_train)
-misclassification_rate(yhat_nn_train, y_train)
 
 CSV.write("yhat_nn.csv", yhat_nn)
 
@@ -220,7 +214,7 @@ ROC curves
 #%%
 #Due to different data output structure had to use different packages for ROC curves
 plot(roc_curve(yhat_logit_tuned_p, y_test))
-plot(ROC.roc(pdf.(yhat_logit_tuned_p), y_test, 1)))
+# plot(ROC.roc(pdf.(yhat_logit_tuned_p), y_test, 1)))
 plot(ROC.roc(yhat_nn_p, y_test, 1))
 
 # don't have score vectors for SVM
@@ -239,31 +233,5 @@ plot(prcurve(yhat_nn_p, y_test_int))
 # don't have score vectors for SVM
 # plot(prcurve(pdf.(yhat_svm_p,1), y_test_int))
 
-
-
-#%%md
-*Discussion of Results*
-Comment on your results:
-#%%md
-#TODO fix ordering
-*Which model performs the best?*
-
-Misclassification Ranking
-1. NN
-2. Logit
-3. SVM
-
-Confusion Matrices
-1. NN
-2. Logit
-3. SVM
-
-ROC Curves
-1. NN
-2. Logit
-
-Precision-Recall curve
-1. NN
-2. Logit
 
 #END
