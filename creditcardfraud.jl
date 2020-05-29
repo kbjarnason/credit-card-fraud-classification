@@ -1,30 +1,35 @@
-#%% md
+Classification of fraudulent/not credit card transactions (imbalanced data)
 By Kristian Bjarnason
-
+- To improve, implement train, test, val split rather than just train, test
 #%%
 #Relevant packages
-using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, Plots, Flux, EvalCurves
-using Flux:outdims, activations
+using Pkg, Revise, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJModels, MLJLinearModels, Plots, Flux, EvalCurves, UrlDownload, MLBase, StatsBase, ROC
+using Flux:outdims, activations, @epochs, throttle
+#%% md
+using Flux.Data
+# using AUC # add git@github.com:paulstey/AUC.jl.git
 
 #%%md
 *Data Preparation*
 Divide the sample into two equal sub-samples. Keep the proportion of frauds the same in each sub-sample (246 frauds in each). Use one sub-sample to estimate (train) your models and the second one to evaluate the out-of-sample performance of each model.
 #%%
-using Pkg, DataFrames, CSV, LinearAlgebra, Dates, Statistics, MLJ, MLJBase, MLJLinearModels, Plots, Flux, EvalCurves
-using Flux:outdims, activations
-
 #Set drive and import data
-cd("/Users/kristianbjarnason/Documents/Programming/Julia/creditcard")
-data = CSV.read("credicard.csv")
+# cd("/Users/kristianbjarnason/Documents/Programming/Julia/creditcard")
+# data = CSV.read("credicard.csv")
+data = DataFrame(urldownload("https://storage.googleapis.com/download.tensorflow.org/data/creditcard.csv"))
+
+#delete time column
+select!(data, Not(:Time))
+
+#log data column as it covers a large range. Also add 1e-6 so no values are 0 prior to being logged.
+data[!,:Amount] = log.(data[!,:Amount] .+ 1e-6)
 
 data_fraud = filter(row -> row[:Class] == 1, data)
 data_notfraud = filter(row -> row[:Class] == 0, data)
 
-#split into training and test data, training wi th 1 extra row due to odd numbber of non-fraudulent claims and each with even number of fraudulent claims
+#split into training and test data, training with 1 extra row due to odd numbber of non-fraudulent claims and each with even number of fraudulent claims
 data_train = vcat(data_fraud[1:round(Int, nrow(data_fraud)/2),:], data_notfraud[1:round(Int, nrow(data_notfraud)/2),:])
-sort!(data_train, :Time)
 data_test = vcat(data_fraud[round(Int, nrow(data_fraud)/2)+1:nrow(data_fraud),:], data_notfraud[round(Int, nrow(data_notfraud)/2)+1:nrow(data_notfraud),:])
-sort!(data_test, :Time)
 
 #Setup train and test arrays/vectors
 X_train = DataFrames.select(data_train, Not(:Class))
@@ -34,49 +39,42 @@ y_train_int = data_train.Class
 y_test = categorical(data_test.Class)
 y_test_int = data_test.Class
 
+#Standardised data for SVM and NN
+stand_model = Standardizer()
+X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train)
+X_test_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_test)
+
 #%%md
 *Estimation of models*
 Estimate three different models: (1) logit; (2) support vector machines; (3) neural network.
 #%%md
 Logit
 #%%
-#initial logit classification with lambda = 0.2
-X_train = DataFrames.select(data_train, Not(:Class))
-X_test = DataFrames.select(data_test, Not(:Class))
-y_train = categorical(data_train.Class)
-y_train_int = data_train.Class
-y_test = categorical(data_test.Class)
-y_test_int = data_test.Class
-
+#initial logit classification with lambda = 1.0
 @load LogisticClassifier pkg=MLJLinearModels
-model_logit = LogisticClassifier(lambda=0.2)
+model_logit = LogisticClassifier(lambda=1.0)
 
 logit = machine(model_logit, X_train, y_train)
 
 fit!(logit)
 
-yhat_logit_p = predict(logit, X_test)
-yhat_logit = predict_mode(logit, X_test)
+yhat_logit_p = MLJBase.predict(logit, X_test)
+yhat_logit = categorical(mode.(yhat_logit_p))
 
-misclassification_rate(yhat_logit_p, y_test)
+cm_logit = confusion_matrix(yhat_logit, y_test)
+misclassification_rate(yhat_logit, y_test)
+
+CSV.write("yhat_logit.csv", yhat_logit)
+CSV.write("yhat_logit_p.csv", yhat_logit_p)
 
 #%%
-
-#%%
-#tuned svm
-X_train = DataFrames.select(data_train, Not(:Class))
-X_test = DataFrames.select(data_test, Not(:Class))
-y_train = categorical(data_train.Class)
-y_train_int = data_train.Class
-y_test = categorical(data_test.Class)
-y_test_int = data_test.Class
-
+#tuned logit
 model_logit = @load LogisticClassifier pkg=MLJLinearModels
-r = range(model_logit, :lambda, lower=0.001, upper=1.0, scale=:linear)
+r = range(model_logit, :lambda, lower=1e-6, upper=100, scale=:log)
 
 self_tuning_logit_model = TunedModel(model=model_logit,
-                                                  resampling = CV(nfolds=5),
-                                                  tuning = Grid(resolution=5),
+                                                  resampling = CV(nfolds=3),
+                                                  tuning = Grid(resolution=10),
                                                   range = r,
                                                   measure = cross_entropy)
 
@@ -84,168 +82,154 @@ self_tuning_logit = machine(self_tuning_logit_model, X_train, y_train)
 
 fit!(self_tuning_logit)
 
-yhat_logit_tuned_p = predict(self_tuning_logit, X_test)
-yhat_logit_tuned = predict_mode(self_tuning_logit, X_test)
+yhat_logit_tuned_p = MLJBase.predict(self_tuning_logit, X_test)
+yhat_logit_tuned = categorical(mode.(yhat_logit_tuned_p))
 
 misclassification_rate(yhat_logit_tuned, y_test)
+
+CSV.write("yhat_logit_tuned.csv", yhat_logit_tuned)
+CSV.write("yhat_logit_tuned_p.csv", yhat_logit_tuned_p)
 
 #%%md
 Support Vector Machine
 #%%
-X_train = DataFrames.select(data_train[1:5000,:], Not(:Class))
-X_test = DataFrames.select(data_test[1:5000,:], Not(:Class))
-y_train = categorical(data_train[1:5000,:].Class)
-y_train_int = data_train[1:5000,:].Class
-y_test = categorical(data_test[1:5000,:].Class)
-y_test_int = data_test[1:5000,:].Class
+#standardise data for SVM
+stand_model = Standardizer()
 
-#tuning was giving problems so manually trying different costs
+X_train_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_train) # not used
+X_test_std = MLJModels.transform(fit!(machine(stand_model, X_train)), X_test)
+
+#%%
+#initial svm classification with cost = 1.0
 @load SVC
-model_svm1 = SVC(cost=1.0)
-svc1 = machine(model_svm1, X_train, y_train)
-fit!(svc1)
+model_svm = @pipeline Std_SVC(std_model = Standardizer(),
+                                      svc = SVC())
 
-yhat_svm1 = predict(svc1, X_test)
-misclassification_rate(yhat_svm1, y_test)
-yhat_svm1
+svc = machine(model_svm, X_train, y_train)
+
+fit!(svc)
+
+yhat_svm = MLJBase.predict(svc, X_test_std)
+#0.00163
+misclassification_rate(yhat_svm, y_test)
+cm_svm = confusion_matrix(yhat_svm, y_test)
+
+CSV.write("yhat_svm.csv", yhat_svm)
 
 #%%
 @load SVC
-model_svm2 = SVC(cost=0.5)
-svc2 = machine(model_svm2, X_train, y_train)
-fit!(svc2)
+model_svm = @pipeline Std_SVC(std_model = Standardizer(),
+                              svc = SVC())
 
-yhat_svm2 = predict(svc2, X_test)
-misclassification_rate(yhat_svm2, y_test)
-yhat_svm2
+r = range(model_svm, :(svc.cost), lower=0.0, upper=2.5, scale=:linear)
+iterator(r,6)
+svc = machine(model_svm, X_train, y_train)
 
-#%%
-@load SVC
-model_svm3 = SVC(cost=0.1)
-svc3 = machine(model_svm3, X_train, y_train)
-fit!(svc3)
+self_tuning_svm_model = TunedModel(model=model_svm,
+                                   resampling = CV(nfolds=3),
+                                   tuning = Grid(resolution=6),
+                                   range = r,
+                                   measure = MLJ.precision)
 
-yhat_svm3 = predict(svc3, X_test)
-misclassification_rate(yhat_svm3, y_test)
-yhat_svm3
+self_tuning_svm = machine(self_tuning_svm_model, X_train, y_train)
+
+fit!(self_tuning_svm)
+
+fitted_params(self_tuning_svm).best_model
+
+report(self_tuning_svm)
+
+yhat_svm_tuned = MLJBase.predict(self_tuning_svm, X_test_std)
+
+misclassification_rate(yhat_svm_tuned, y_test)
+cm_svm = confusion_matrix(yhat_svm_tuned, y_test)
+
+CSV.write("yhat_svm_tuned.csv", yhat_svm_tuned)
 
 #%%md
 Neural Network
 #%%
-#Adapted from the tutorial: https://www.tensorflow.org/tutorials/structured_data/imbalanced_data
-#thanks to Michael Griffiths for his help putting this together too. https://pastebin.com/iwtCFN3F
-using CSV
-using StatsBase
-using Statistics
-using Flux
-using DataFrames
-using UrlDownload
-# using AUC # add git@github.com:paulstey/AUC.jl.git
-using MLBase
-using StatsBase
+#oversample fraudulent cases (since data so imbalanced)
+X_train_oversampled = vcat(X_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),1:29], 100))
+y_train_oversampled = vcat(y_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),30], 100))
 
-cd("/Users/kristianbjarnason/Documents/Programming/Julia/creditcard")
-data = CSV.read("credicard.csv")
-# data = urldownload("https://storage.googleapis.com/download.tensorflow.org/data/creditcard.csv")
+stand_model = Standardizer()
+X_train_oversampled_std = MLJModels.transform(fit!(machine(stand_model, X_train_oversampled)), X_train_oversampled)
 
-data[:Amount] = log.(data[:Amount] .+ 1e-6)
+data1 = DataLoader(Array(X_train_oversampled_std)', y_train_oversampled, batchsize=2048, shuffle=true)
 
-# The scale of the columns is quite variable -- we need to normalize each column
-# The steps are to log the Amount and then standard scale everything (only use training data for this)
-n_rows = size(data, 1)
-train_idx = sample(1:n_rows, Int(floor(n_rows * .7)))
-remainder = setdiff(1:n_rows, train_idx)
-validation_idx = sample(remainder, Int(floor(size(remainder, 1) * .2)))
-test_idx = setdiff(remainder, validation_idx)
-
-# Remove time column (index 1) and log amount column (index 30)
-train = data[train_idx,2:31]
-test = data[test_idx,2:31]
-valid = data[validation_idx,2:31]
-
-# Now let's scale
-means_train, sd_train =  Array{Float32}(undef, 29),  Array{Float32}(undef, 29)
-means = colwise(mean, train)
-sd = colwise(std, train)
-
-training = train
-testing = test
-validation = valid
-for i in 1:29
-  training[i] = (training[:,i] .- means[i]) ./ sd[i]
-  testing[i] = (testing[:,i] .- means[i]) ./ sd[i]
-  validation[i] = (validation[:,i] .- means[i]) ./ sd[i]
-end
+n_inputs = ncol(X_train_oversampled)
+n_outputs = 1
+n_hidden1 = 16
 
 m = Chain(
-  Dense(29, 16, relu),
-  Dense(16, 1, σ)
-)
-# try crossentropy??
-loss(x, y) = Flux.binarycrossentropy(m(x), y)
-valid_X = Array(validation[:,1:29])'
-valid_y = validation[:Class]
+          Dense(n_inputs, n_hidden1, relu),
+          Dropout(0.1),
+          Dense(n_hidden1, n_outputs, σ)
+          )
 
-progress() = sum(loss.(valid_X, valid_y))
+loss(x, y) = Flux.tversky_loss(m(x), y, β=0.9) #tversky loss uses precision and recall, slower calc than crossentropy
+# loss(x, y) = Flux.crossentropy(m(x), y)
+
 ps = Flux.params(m)
-opt = ADAM()
+# opt = ADAM()
+opt = Descent()
 
-# Custom training loop
-for batch in 1:400
-    batch_data = sample(Array(training[1:29])', 32)
-    Flux.train!(loss, ps, batch_data, opt)
-    println(progress())
-end
+@epochs 50 Flux.train!(loss, ps, data1, opt)
 
-# Evaluate on test data
-y_pred = [x[1] for x in m.([d[1] for d in testing])]
-y_test = [d[2] for d in testing]
+yhat_nn_p = vec(m(Array(X_test_std)'))
+yhat_nn = categorical(Int.(yhat_nn_p .<= 0.5))
 
-y_thresh = (y_pred[:] .> .5) .+ 1
-confusmat(2, y_test[:] .+ 1, y_thresh[:])
+cm_nn = confusion_matrix(yhat_nn, y_test)
+misclassification_rate(yhat_nn, y_test)
 
-#%%md
-#50/50 train/test split version
-#%%
-
-
+CSV.write("yhat_nn.csv", yhat_nn)
 
 #%%md
 *OOS results*
+#%%
+#if needed can reload from here
+yhat_logit_tuned = CSV.read("yhat_logit_tuned.csv")
+yhat_svm_tuned = CSV.read("yhat_svm_tuned.csv")
+yhat_nn = CSV.read("yhat_nn.csv")
+
+#%%md
+Misclassification rate
+#%%
+misclassification_rate(yhat_logit_tuned, y_test)
+misclassification_rate(yhat_svm_tuned, y_test)
+misclassification_rate(yhat_nn, y_test)
+
 #%%md
 Confusion matrix
 #%%
-cm_logit = confusion_matrix(yhat_logit,y_test)
-cm_svm = confusion_matrix(yhat_pred_svm,y_test)
-cm_nn = confusion_matrix(yhat_pred_nn,y_test)
+cm_logit = confusion_matrix(yhat_logit_tuned, y_test)
+cm_svm = confusion_matrix(yhat_svm_tuned , y_test)
+cm_nn = confusion_matrix(yhat_nn, y_test)
 
 #%%md
-(b) ROC curves
+ROC curves
 #%%
-plot(roc_curve(yhat_logit_p,y_test))
-plot(roc_curve(yhat_svm_p,y_test))
-plot(roc_curve(yhat_nn_p,y_test))
+#Due to different data output structure had to use different packages for ROC curves
+plot(roc_curve(yhat_logit_tuned_p, y_test))
+# plot(ROC.roc(pdf.(yhat_logit_tuned_p), y_test, 1)))
+plot(ROC.roc(yhat_nn_p, y_test, 1))
+
+# don't have score vectors for SVM
+# plot(roc_curve(yhat_svm_p,y_test))
+# plot(roc_curve(yhat_nn_p,y_test))
+
+#how to plot this??
+MLBase.roc(y_test_int, yhat_nn_p)
 
 #%%md
 Precision-Recall curve
 #%%
-plot(prcurve(pdf.(yhat_logit_p,1), y_test_int))
-plot(prcurve(pdf.(yhat_svm_p,1), y_test_int))
-plot(prcurve(pdf.(yhat_nn_p,1), y_test_int))
+plot(prcurve(pdf.(yhat_logit_tuned_p,1), y_test_int))
+plot(prcurve(yhat_nn_p, y_test_int))
 
-#%%md
-*Discussion of Results*
-Comment on your results:
-#%%md
-*Which model performs the best?*
+# don't have score vectors for SVM
+# plot(prcurve(pdf.(yhat_svm_p,1), y_test_int))
 
 
-#%%md
-*What are the main differences of each model?*
-Logit:
-
-
-SVM:
-
-
-Neural Network:
+#END
