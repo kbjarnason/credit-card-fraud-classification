@@ -150,8 +150,8 @@ CSV.write("yhat_svm_tuned.csv", yhat_svm_tuned)
 Neural Network
 #%%
 #oversample fraudulent cases (since data so imbalanced)
-X_train_oversampled = vcat(X_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),1:29], 1000))
-y_train_oversampled = vcat(y_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),30], 1000))
+X_train_oversampled = vcat(X_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),1:29], 100))
+y_train_oversampled = vcat(y_train,repeat(data_fraud[1:Int(nrow(data_fraud)/2),30], 100))
 
 stand_model = Standardizer()
 X_train_oversampled_std = MLJModels.transform(fit!(machine(stand_model, X_train_oversampled)), X_train_oversampled)
@@ -161,7 +161,6 @@ data1 = DataLoader(Array(X_train_oversampled_std)', y_train_oversampled, batchsi
 n_inputs = ncol(X_train_oversampled)
 n_outputs = 1
 n_hidden1 = 16
-# n_hidden2 = 8
 
 m = Chain(
           Dense(n_inputs, n_hidden1, relu),
@@ -169,15 +168,14 @@ m = Chain(
           Dense(n_hidden1, n_outputs, σ)
           )
 
-# loss(x, y) = Flux.tversky_loss(m(x), y, β=0.7) #tversky loss uses precision and recall, slower calc than crossentropy
+loss(x, y) = Flux.tversky_loss(m(x), y, β=0.9) #tversky loss uses precision and recall, slower calc than crossentropy
 # loss(x, y) = Flux.crossentropy(m(x), y)
-loss(x, y) = Flux.binarycrossentropy(m(x)[1], y)
 
 ps = Flux.params(m)
 # opt = ADAM()
-opt = Gradient()
+opt = Descent()
 
-@epochs 100 Flux.train!(loss, ps, data1, opt)
+@epochs 50 Flux.train!(loss, ps, data1, opt)
 
 yhat_nn_p = vec(m(Array(X_test_std)'))
 yhat_nn = categorical(Int.(yhat_nn_p .<= 0.5))
